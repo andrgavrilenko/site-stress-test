@@ -16,6 +16,8 @@ Open this when unsure whether an area is covered. Not every item applies; skip w
 - TLS 1.2+, cert expiry > 30 days, auto-renewal, HTTP/2 or 3.
 
 ## API behaviour
+- Separate API host: `/openapi.json`, `/docs`, `/redoc`, `/swagger`, `/graphql` reachable without auth? A public schema that lists admin routes is a map for attackers. `/health` that prints environment, versions and dependency latencies belongs behind a token or on an internal port. Public feature-flag or config endpoints should expose only what the client reads.
+- Auth flow cost: how many requests an anonymous visitor and a signed-in user trigger before seeing content (`/auth/me`, `/auth/refresh`, `/session`), whether they run in sequence, and whether any of them repeats on one screen.
 - Input validation: garbage IDs → 400, not 500. Lists: find the length that breaks the server; compare with the client's own cap.
 - Platform error pages (Cloudflare 1101, Vercel 500 page, raw stack traces) = unhandled exception.
 - Unauthenticated access to data that is monetised or per-user.
@@ -25,6 +27,9 @@ Open this when unsure whether an area is covered. Not every item applies; skip w
 
 ## SEO and indexing
 - Each sitemap URL returns 200 with its own title, description, canonical equal to the sitemap URL, correct `lang`.
+- The canonical, `og:url`, `og:image` and sitemap URLs point at the final host, not at one that redirects (apex → www or the reverse). Fetch the canonical itself and expect 200.
+- Sign-in, sign-up and other account pages are `noindex` and absent from the sitemap; content pages (pricing, docs) have a canonical.
+- Unknown URLs return 404, not a redirect to the login page: a 3xx to `/auth/*` for a random path is a soft-404 in disguise.
 - Test with a Googlebot UA too: some sites render only for bots.
 - Language variants: `/en/` serves `lang="en"`, English meta, `og:locale`; hreflang set complete with `x-default`.
 - `lastmod` real, not "today" for everything.
@@ -48,7 +53,9 @@ Open this when unsure whether an area is covered. Not every item applies; skip w
 
 ## Hosting and infrastructure
 - Identify every layer with evidence: DNS provider, CDN/edge, TLS issuer, compute (platform headers and error pages), storage hints, static asset caching, email (MX/SPF/DKIM/DMARC), telemetry (NEL, RUM).
-- Edge cache actually used? `cf-cache-status: DYNAMIC` on cacheable JSON/HTML means every request executes compute.
+- Edge cache actually used? `cf-cache-status: DYNAMIC` on cacheable JSON/HTML means every request executes compute. On Vercel, `X-Vercel-Cache: MISS` plus `no-store` on a marketing page means the same.
+- Regions: where do functions run (`X-Vercel-Id` edge::function, `x-railway-edge`, `fly-region`, `cf-ray` suffix) relative to users and to the API? One hop across an ocean per request shows up as 200+ ms of TTFB.
+- IPv6: AAAA records present on every public host.
 - Third-party dependencies without SLA: tile servers, public geocoders, demo routing servers, CDNs. What breaks when each is down, and for whom (new vs returning users with SW cache).
 - Latency from a stated vantage point, parallel burst without degradation, no 429 where there should be none.
 - Cost multipliers: duplicate calls, uncached data, crashes that can be triggered externally.

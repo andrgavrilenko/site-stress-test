@@ -14,6 +14,7 @@ You are the last reviewer before launch. The owner wants a list of things that w
 - **Evidence or it did not happen.** Every finding carries how you saw it (command, request, screenshot, DOM query). When you cannot reproduce something, say "not verified" instead of guessing. When your own click missed a 10-px marker, that is your miss, not their bug: retry precisely before reporting.
 - **Scope follows the user.** Default scope is technical: availability, security, SEO, UX/mobile, hosting, data consistency. Legal and business items (GDPR texts, company identity, B2B terms, licences) go in only if the user asks for "legal" or "everything"; many owners explicitly do not want them in an engineering stress test.
 - **Re-verify before you re-report.** If the user says "check yourself again", re-run the key probes rather than re-reading your notes: thresholds move (a "500 IDs" crash may really start at 100).
+- **The user's Chrome may already be signed in to the site.** The owner tests their own product, so their profile often carries a live session. Check `document.cookie`/the landing URL before anything else: if you land on a dashboard, you are inside their account. Measure and screenshot, click nothing that writes, and say in the report that the desktop run was authenticated. The anonymous first-visit experience then comes from the built-in browser pane, which starts clean.
 
 ## Workflow
 
@@ -27,9 +28,11 @@ Run the bundled probe first; it does the boring HTTP part in one go and writes J
 python <skill-dir>/scripts/probe.py https://example.com --out <project>/<site>_audit/raw --burst 10
 ```
 
-It covers: redirects (http→https, www), response headers and security headers, soft-404 detection (random path and sensitive paths like `/.env`, `/wp-login.php` compared by body hash), robots.txt and sitemap parse with a status sample, per-page `<html lang>`, title, description, canonical, hreflang, og:url, TTFB over 3 runs, a small parallel burst, DNS (NS, A/AAAA, MX, SPF, DMARC), TLS issuer/expiry, compression and cache status. Read `summary.md` from the output folder, then look at the raw files for anything surprising.
+It covers: redirects (http→https, www), response headers and security headers, soft-404 detection (random path and sensitive paths like `/.env`, `/wp-login.php` compared by body hash, plus "redirect to login" as a soft-404 variant), robots.txt and sitemap parse with a status sample, per-page `<html lang>`, title, description, canonical, hreflang, og:url, whether the canonical itself redirects, TTFB over 3 runs, a small parallel burst, DNS (NS, A/AAAA, MX, SPF, DMARC), TLS issuer/expiry, compression and cache status. Read `summary.md` from the output folder, then look at the raw files for anything surprising.
 
-Then download the app bundle (`app.js`, `sw.js`, manifest) and grep it: API endpoints (`/api/`), third-party hosts, `localStorage`/`cookie`, consent logic, analytics, clipboard, geolocation. The bundle tells you what the API accepts before you touch it.
+Then download the app bundle (Next.js `/_next/static/chunks/*.js`, or `app.js`, `sw.js`, manifest) and grep it: API endpoints (`/api/`, `https://api.`), third-party hosts, `localStorage`/`cookie`, consent logic, analytics, clipboard, geolocation. The bundle tells you what the API accepts before you touch it. When the API lives on its own host, run the probe again with `--api https://api.example.com`: it checks `/health`, `/openapi.json`, `/docs`, `/redoc`, security headers and a foreign-origin preflight, and counts OpenAPI operations without a security requirement. A public schema with admin routes, or a health endpoint that prints environment and dependency latencies, is a finding.
+
+If the probe dies with an SSL certificate error, the Python build has no CA bundle (python.org builds on Windows do this): `pip install certifi` and the script picks it up on its own.
 
 ### 2. API abuse, gently
 
@@ -54,9 +57,13 @@ Check, in this order, taking a screenshot at each state:
 
 Canvas maps (MapLibre, Leaflet GL) ignore imprecise clicks: zoom a screenshot region at scale 1 to get exact pixels, or centre the map on a known item ("show on map") and click the centre.
 
+Time what the user waits for, not just what loads. A page that shows "Loading…" while it calls `/auth/me` and then `/auth/refresh` before rendering a sign-in form, or a signed-in user bounced `/auth/sign-in → / → /dashboard` with a loader at every hop, is measured with a small poll loop in `javascript_tool` (`location.pathname` and a text marker every 400 ms) and `performance.getEntriesByType('resource')` for the API calls behind it. Count identical calls on one screen (`/auth/me` three times is common and cheap to fix).
+
+The browser pane renders only while it is visible: when it is hidden, screenshots and scroll actions time out. Read the DOM with `javascript_tool`, `get_page_text` or `read_page` instead, and ask the user to show the pane if you need pictures.
+
 ### 4. Hosting and infrastructure
 
-Describe the stack as a table of layers with the evidence for each: DNS provider, edge/CDN, TLS (issuer, expiry, protocols), compute (Workers/Lambda/Vercel/VPS: platform error pages and headers give it away), storage hints (parameter limits, latency), static asset caching (`cf-cache-status`, `age`, `etag`), third-party dependencies with no SLA (tile servers, public geocoders, unpkg), PWA/service-worker strategy, email (MX, SPF, DKIM, DMARC). Measure TTFB and a burst from where you are and state the vantage point and the edge PoP. Hosting findings are usually about how the app uses the platform (dynamic responses that should be cached, duplicate calls that multiply the bill, missing rate limits), not about the platform itself; say so when that is the case.
+Describe the stack as a table of layers with the evidence for each: DNS provider, edge/CDN, TLS (issuer, expiry, protocols), compute (Workers/Lambda/Vercel/VPS: platform error pages and headers give it away), storage hints (parameter limits, latency), static asset caching (`cf-cache-status`, `age`, `etag`), third-party dependencies with no SLA (tile servers, public geocoders, unpkg), PWA/service-worker strategy, email (MX, SPF, DKIM, DMARC). Measure TTFB and a burst from where you are and state the vantage point and the edge PoP. On Vercel, `X-Vercel-Id: arn1::iad1::…` reads "edge PoP :: function region": a function region on another continent from the users and the API is a finding on its own, and `Cache-Control: no-store` on a marketing page means every visit runs a function. On Cloudflare, `cf-cache-status: DYNAMIC` on cacheable JSON or HTML means the same thing. Hosting findings are usually about how the app uses the platform (dynamic responses that should be cached, duplicate calls that multiply the bill, missing rate limits), not about the platform itself; say so when that is the case.
 
 ### 5. Report
 
@@ -70,3 +77,5 @@ Write `REPORT.md` in the user's language using `references/report-template.md`. 
 - Screenshot timeouts in the Chrome extension while the tab is in the background are a tooling limit; JS still executes. Do not report a "frozen renderer".
 - "The page wrote to the clipboard" notes from the browser pane during map drags are false positives when the clipboard is empty afterwards. Check with `Get-Clipboard` before reporting.
 - A "search this area" button that appears only after a large pan is a UX threshold question, not a failure; read the code for the threshold before calling it broken.
+- `401` errors in the console on a sign-in page are usually the app probing `/auth/me` for an anonymous visitor. The bug, if any, is that the form waits for them; the 401 itself is expected.
+- A burst's TTFB spread (150 ms to 1500 ms across 10 parallel requests) is mostly TLS handshakes from separate connections, not server queueing. Look for 429s and for the maximum, and compare with sequential TTFB.

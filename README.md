@@ -81,7 +81,9 @@ and the raw bodies of key pages to the output folder. It checks:
   COOP), CORS on HTML, Alt-Svc;
 - soft-404 detection: a random path and a list of sensitive paths (`/.env`, `/.git/HEAD`,
   `/wp-login.php`, `/xmlrpc.php`, `/admin`, `/api/` and others) compared with the home page
-  by body hash, plus a missing image path;
+  by body hash, plus a missing image path; a random path that redirects to a login page is
+  flagged as a soft-404 in disguise, and the home page's canonical is fetched to see whether
+  it redirects itself;
 - `robots.txt`, the sitemaps it names (or `/sitemap.xml`), URL count, `lastmod` distribution,
   path prefixes, and a random sample of pages with their status, `lang`, title, canonical,
   `og:url` and hreflang count, with duplicate-body detection across the sample;
@@ -89,7 +91,12 @@ and the raw bodies of key pages to the output folder. It checks:
   `--burst` requests, reporting statuses and the TTFB spread;
 - a CORS preflight from a foreign origin against an API path if `robots.txt` disallows one;
 - DNS: NS, A, AAAA, MX, TXT (SPF), DMARC and CAA records via `nslookup` against 1.1.1.1;
-- TLS: protocol, issuer, expiry and the first SANs.
+- TLS: protocol, issuer, expiry and the first SANs;
+- with `--api https://api.example.com`, a separate API host: `/health`, `/openapi.json`,
+  `/docs`, `/redoc`, `/graphql`, `/metrics` and friends without auth, security headers, a
+  foreign-origin CORS preflight, a 10-request burst on `/health` with a look for rate-limit
+  headers, and, when the OpenAPI schema is public, how many operations carry no security
+  requirement and which tags look administrative.
 
 Run it from the skill folder, or from wherever you cloned this repository:
 
@@ -98,8 +105,10 @@ python scripts/probe.py https://example.com --out audit/raw --burst 10
 ```
 
 Options: `--out DIR` (default `probe_out`), `--burst N` parallel requests, once (default 10),
-`--sample N` sitemap URLs to fetch (default 15). The script sends GET, HEAD and OPTIONS only,
-and the burst runs exactly once. It needs Python 3.8 or newer and `nslookup` on the PATH.
+`--sample N` sitemap URLs to fetch (default 15), `--api URL` a separate API origin to probe.
+The script sends GET, HEAD and OPTIONS only, and each burst runs exactly once. It needs
+Python 3.8 or newer and `nslookup` on the PATH. If Python has no CA bundle (python.org builds
+on Windows), `pip install certifi` and the script uses it.
 
 The output folder gets three things: `summary.md` (read this first, a few dozen lines),
 `probe.json` (every measurement in one file, for grepping or diffing between runs) and
