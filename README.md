@@ -11,6 +11,35 @@ before launch.
 
 The skill was built from a real pre-launch audit of a city guide app and smoke-tested on it.
 
+## What it finds
+
+The aim is the list of things that will break, embarrass the owner or cost money after
+launch. Typical findings, each reproduced from the outside:
+
+- **Soft-404s.** Unknown paths and `/.env` or `/wp-login.php` return 200 with the app shell.
+  Scanners keep coming back and crawlers index junk. The probe compares bodies by hash.
+- **Unhandled exceptions behind the API.** A platform error page (Cloudflare `error code:
+  1101`, Vercel `FUNCTION_INVOCATION_FAILED`) on a long ID list. The skill finds the exact
+  threshold by bisection, then stops. If the client caps lists at 120 and the server dies at
+  100, ordinary users hit it, not only attackers.
+- **Missing rate limiting.** A burst of 10 to 20 requests with no 429 and no slowdown.
+- **Data that should be private or paid.** Per-business stats or user lists served without
+  auth.
+- **SEO that disagrees with reality.** Sitemap URLs that return duplicate bodies, canonicals
+  that point elsewhere, `/en/` pages with `lang="ru"`, `lastmod` set to today for everything.
+- **Hosting misuse.** Cacheable JSON served as `cf-cache-status: DYNAMIC`, so every request
+  runs compute, duplicate calls after one click that multiply the bill, third-party tile
+  servers or geocoders with no SLA.
+- **Mobile and UX bugs.** A consent banner over the main button, an invisible overlay eating
+  taps (found with `elementFromPoint`), horizontal overflow at 375 px, the wrong language
+  requested for data, console errors on first load, storage written before consent.
+- **Weak transport and headers.** Missing HSTS or CSP, scripts from a CDN without SRI,
+  `Access-Control-Allow-Origin: *` on credentialed APIs, an expiring certificate.
+
+The skill also records what works, so the owner knows what not to touch, and lists
+things that look like bugs but are not (for example, a consent choice left over in the
+owner's own browser profile).
+
 ## What is in the repository
 
 | Path | Purpose |
@@ -71,6 +100,31 @@ python scripts/probe.py https://example.com --out audit/raw --burst 10
 Options: `--out DIR` (default `probe_out`), `--burst N` parallel requests, once (default 10),
 `--sample N` sitemap URLs to fetch (default 15). The script sends GET, HEAD and OPTIONS only,
 and the burst runs exactly once. It needs Python 3.8 or newer and `nslookup` on the PATH.
+
+The output folder gets three things: `summary.md` (read this first, a few dozen lines),
+`probe.json` (every measurement in one file, for grepping or diffing between runs) and
+`home.html` (the raw home page). A trimmed `summary.md` looks like this:
+
+```
+## Home
+- status 200, TTFB 393 ms, server `cloudflare`, encoding `br`, cache {'cf-cache-status': 'HIT', ...}
+- security headers: strict-transport-security=✗, content-security-policy=✗, ...
+## Soft-404
+- random path → 404, same body as home: **True**
+## Latency
+- burst 3: [(200, 3)], TTFB [561, 580, 592]
+## DNS / TLS
+- TLS: {'protocol': 'TLSv1.3', 'issuer': 'SSL Corporation', 'not_after': 'Dec 25 22:56:35 2026 GMT', ...}
+```
+
+The probe is a first pass, not a verdict. It reports measurements; the skill then reads
+them next to the app bundle and the browser pass and decides what is a finding.
+
+**Windows note.** The python.org installer does not always ship a CA bundle that OpenSSL can
+find, and every HTTPS request then fails with `CERTIFICATE_VERIFY_FAILED`. The probe records
+this as status 0 for every page. Point `SSL_CERT_FILE` at the certifi bundle
+(`pip install certifi`, then `python -c "import certifi; print(certifi.where())"`) and run it
+again.
 
 ## Install
 
